@@ -1,0 +1,31 @@
+{
+    "catalogo": {
+        "valido": 1000,
+        "invalido": 0,
+        "incompleto": 0,
+        "duplicado": 0
+    },
+    "interacoes": {
+        "valido": 1000,
+        "invalido": 0,
+        "incompleto": 0,
+        "duplicado": 0
+    },
+    "comentarios": {
+        "valido": 1000,
+        "invalido": 0,
+        "incompleto": 0,
+        "duplicado": 0
+    },
+    "registros_carregados": {
+        "catalogo": 1000,
+        "interacoes": 1000,
+        "comentarios": 1000
+    },
+    "registros_corrigidos": {
+        "catalogo": 1000,
+        "interacoes": 0,
+        "comentarios": 0
+    },
+    "tempo_processamento_segundos": 1.501732349395752
+}
