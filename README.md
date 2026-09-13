@@ -1352,8 +1352,42 @@ Exemplo (`python -m src.main --usuario 3`):
 ```
 
 ---
+## 27. Métricas Operacionais e KPIs 
+### Métricas Operacionais
 
-## 27. Uso de IA — Estudante 02
+Quantidade total de recomendações geradas: Contabiliza o volume absoluto de sugestões criadas pelo motor de inferência em um determinado período, baseando-se no histórico da tabela de recomendações. No dashboard, atua como um termômetro geral de atividade da plataforma.
+
+Tempo médio consumido: Dimensiona a carga real de atenção dedicada aos estudos, extraindo a média em minutos registrada durante as atividades na tabela de interação. Exibido de forma global e também agrupado por categoria no gráfico de barras para identificar quais assuntos retêm mais a atenção.
+
+Volume de recomendações positivas: Representa a contagem absoluta de recomendações que receberam a avaliação ou status de 'Positivo'. É o indicador que alimenta o eixo temporal do gráfico de linhas, evidenciando o número real de acertos diários do algoritmo.
+
+### KPIs Orientados à Tomada de Decisão
+
+Taxa de Conclusão Média
+
+Objetivo: Avaliar o poder de retenção do conteúdo e entender se os materiais oferecidos prendem a atenção até o final, tanto globalmente quanto em áreas específicas.
+
+Fórmula: AVG(percentual_conclusao)
+
+Fonte dos dados: Tabela interacao
+
+Periodicidade: Semanal
+
+Interpretação: Taxas globais elevadas confirmam que os materiais possuem qualidade e duração ajustadas à rotina do estudante. O cruzamento visual (no gráfico de barras) permite identificar se um índice baixo pertence a uma categoria específica que exige revisão na didática.
+
+Conversão de Recomendações
+
+Objetivo: Mensurar a precisão e a eficácia prática do algoritmo de sugestão preditiva (IA).
+
+Fórmula: (SUM(status = 'Positivo') / COUNT(recomendacao_id)) * 100
+
+Fonte dos dados: Tabela recomendacao
+
+Periodicidade: Diária
+
+Interpretação: O crescimento contínuo desta proporção ao longo dos dias (refletido na curva do gráfico de linhas) indica que o modelo de machine learning está aprendendo corretamente com o usuário. Uma estagnação ou queda sinaliza necessidade de calibrar parâmetros.
+
+## 28. Uso de IA
 
 ### Ferramenta utilizada
 
