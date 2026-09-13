@@ -80,3 +80,36 @@ postgresql:
   porta: 5433
   banco: desafio_dados
   usuario: postgres
+
+mongodb:
+  host: localhost
+  porta: 27018
+  banco: desafio_dados
+  colecao_comentarios: comentarios
+  timeout_ms: 5000
+
+embeddings:
+  modelo: simulado-hashing-idf-v1
+  dimensao: 384
+  peso_titulo: 2
+  vocabulario: dados/processados/vocabulario_embeddings.json
+
+busca:
+  top_k: 5
+  consultas_demo:
+    - Quero aprender os fundamentos de banco de dados para inteligência artificial.
+    - Como proteger APIs contra vazamentos de dados?
+    - Podcast sobre machine learning supervisionado
+
+recomendacao:
+  top_n: 10
+  tipos_visualizacao:
+    - visualização
+    - início
+    - conclusão
+  tipo_curtida: curtida
+  tipo_conclusao: conclusão
+  nota_minima_curtida: 4
+  limiar_positivo: 70
+  limiar_negativo: 40
+  normalizar_indices: true

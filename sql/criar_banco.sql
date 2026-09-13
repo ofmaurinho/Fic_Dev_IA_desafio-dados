@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE usuario (
     usuario_id INTEGER PRIMARY KEY
 );
@@ -48,11 +50,29 @@ CREATE TABLE interacao (
         REFERENCES conteudo (conteudo_id)
 );
 
+CREATE TABLE conteudo_embedding (
+    conteudo_id INTEGER PRIMARY KEY,
+    embedding VECTOR(384) NOT NULL,
+    modelo VARCHAR(100) NOT NULL,
+    texto_hash CHAR(64) NOT NULL,
+    gerado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_embedding_conteudo
+        FOREIGN KEY (conteudo_id)
+        REFERENCES conteudo (conteudo_id)
+);
+
 CREATE TABLE recomendacao (
     recomendacao_id SERIAL PRIMARY KEY,
     usuario_id INTEGER NOT NULL,
     conteudo_id INTEGER NOT NULL,
-    score NUMERIC NOT NULL,
+    pontuacao NUMERIC(5, 2) NOT NULL,
+    posicao INTEGER NOT NULL,
+    i_vis NUMERIC(6, 4) NOT NULL,
+    i_cur NUMERIC(6, 4) NOT NULL,
+    i_conc SMALLINT NOT NULL,
+    status VARCHAR(10) NOT NULL,
+    data_geracao TIMESTAMP NOT NULL,
 
     CONSTRAINT fk_recomendacao_usuario
         FOREIGN KEY (usuario_id)
@@ -60,5 +80,20 @@ CREATE TABLE recomendacao (
 
     CONSTRAINT fk_recomendacao_conteudo
         FOREIGN KEY (conteudo_id)
-        REFERENCES conteudo (conteudo_id)
+        REFERENCES conteudo (conteudo_id),
+
+    CONSTRAINT uq_recomendacao_execucao
+        UNIQUE (usuario_id, conteudo_id, data_geracao),
+
+    CONSTRAINT ck_recomendacao_pontuacao
+        CHECK (pontuacao BETWEEN 0 AND 100),
+
+    CONSTRAINT ck_recomendacao_posicao
+        CHECK (posicao > 0),
+
+    CONSTRAINT ck_recomendacao_i_conc
+        CHECK (i_conc IN (0, 1)),
+
+    CONSTRAINT ck_recomendacao_status
+        CHECK (status IN ('Positivo', 'Estável', 'Negativo'))
 );

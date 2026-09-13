@@ -18,14 +18,31 @@
         "duplicado": 0
     },
     "registros_carregados": {
-        "catalogo": 1000,
-        "interacoes": 1000,
-        "comentarios": 1000
+        "postgresql": {
+            "catalogo": 1000,
+            "interacoes": 1000
+        },
+        "mongodb": {
+            "comentarios": 1000
+        },
+        "pgvector": {
+            "gerados": 0,
+            "reaproveitados": 1000,
+            "falhas": 0
+        },
+        "recomendacoes": {
+            "data_geracao": "2026-09-12T21:47:08.632194",
+            "total": 1498,
+            "por_status": {
+                "Positivo": 435,
+                "Estável": 1063
+            }
+        }
     },
     "registros_corrigidos": {
         "catalogo": 1000,
         "interacoes": 0,
         "comentarios": 0
     },
-    "tempo_processamento_segundos": 1.501732349395752
+    "tempo_processamento_segundos": 3.9404914379119873
 }

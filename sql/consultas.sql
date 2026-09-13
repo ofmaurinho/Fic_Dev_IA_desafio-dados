@@ -65,3 +65,101 @@ FROM interacao i
 LEFT JOIN usuario u
     ON u.usuario_id = i.usuario_id
 WHERE u.usuario_id IS NULL;
+
+
+-- ============================================================
+-- Estudante 02 — embeddings, busca vetorial e recomendações
+-- ============================================================
+
+
+-- 7. Embeddings armazenados por modelo
+
+SELECT
+    modelo,
+    COUNT(*) AS total_embeddings,
+    MIN(gerado_em) AS primeiro,
+    MAX(gerado_em) AS ultimo
+FROM conteudo_embedding
+GROUP BY modelo;
+
+
+-- 8. Conteúdos sem embedding
+
+SELECT COUNT(*) AS conteudos_sem_embedding
+FROM conteudo co
+LEFT JOIN conteudo_embedding ce
+    ON ce.conteudo_id = co.conteudo_id
+WHERE ce.conteudo_id IS NULL;
+
+
+-- 9. Conteúdos mais semelhantes a um conteúdo (busca vetorial com pgvector)
+
+SELECT
+    co.conteudo_id,
+    co.titulo,
+    ca.nome AS categoria,
+    co.tipo,
+    1 - (ce.embedding <=> (
+        SELECT embedding
+        FROM conteudo_embedding
+        WHERE conteudo_id = 1
+    )) AS similaridade
+FROM conteudo_embedding ce
+JOIN conteudo co
+    ON co.conteudo_id = ce.conteudo_id
+JOIN categoria ca
+    ON ca.categoria_id = co.categoria_id
+WHERE ce.conteudo_id <> 1
+ORDER BY ce.embedding <=> (
+    SELECT embedding
+    FROM conteudo_embedding
+    WHERE conteudo_id = 1
+)
+LIMIT 5;
+
+
+-- 10. Recomendações de um usuário na execução mais recente do pipeline
+--     (a execução é a última geral; usuário sem recomendações nela retorna vazio)
+
+SELECT
+    r.posicao,
+    r.usuario_id,
+    r.conteudo_id,
+    co.titulo,
+    r.pontuacao,
+    r.i_vis,
+    r.i_cur,
+    r.status,
+    r.data_geracao
+FROM recomendacao r
+JOIN conteudo co
+    ON co.conteudo_id = r.conteudo_id
+WHERE r.usuario_id = 3
+  AND r.data_geracao = (
+      SELECT MAX(data_geracao)
+      FROM recomendacao
+  )
+ORDER BY r.posicao;
+
+
+-- 11. Recomendações por execução e status
+
+SELECT
+    data_geracao,
+    status,
+    COUNT(*) AS total_recomendacoes,
+    ROUND(AVG(pontuacao), 2) AS pontuacao_media
+FROM recomendacao
+GROUP BY data_geracao, status
+ORDER BY data_geracao DESC, status;
+
+
+-- 12. Verificar que nenhum conteúdo concluído foi recomendado
+
+SELECT COUNT(*) AS recomendacoes_de_conteudos_concluidos
+FROM recomendacao r
+JOIN interacao i
+    ON i.usuario_id = r.usuario_id
+   AND i.conteudo_id = r.conteudo_id
+WHERE i.tipo_interacao = 'conclusão'
+   OR i.percentual_conclusao >= 100;

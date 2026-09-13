@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     container_name: desafio_dados_postgres
     restart: unless-stopped
 
@@ -24,7 +24,7 @@ services:
     restart: unless-stopped
 
     ports:
-      - "${MONGO_PORT:-27017}:27017"
+      - "${MONGO_PORT:-27018}:27017"
 
     volumes:
       - mongo_data:/data/db
