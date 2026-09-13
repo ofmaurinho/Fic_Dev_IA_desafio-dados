@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 from datetime import datetime
 
 import numpy as np
@@ -7,11 +8,10 @@ from pgvector.psycopg2 import register_vector
 from src.banco.postgresql import conectar_postgresql
 from src.embeddings.gerador import (
     calcular_hash_texto,
-    calcular_idf,
-    gerar_embedding_conteudo,
-    identificar_modelo,
+    carregar_modelo,
+    gerar_embeddings_textos,
     preparar_texto,
-    salvar_vocabulario
+    validar_dimensao
 )
 
 
@@ -110,49 +110,51 @@ def remover_embedding(conexao, conteudo_id: int) -> None:
 def sincronizar_embeddings(
     conexao,
     conteudos: list[dict],
-    idf: dict[str, float],
-    modelo: str,
-    parametros: dict
+    gerar_vetores: Callable[[list[str]], np.ndarray],
+    modelo: str
 ) -> dict:
     """Gera, atualiza ou remove embeddings sem confirmar a transação.
 
-    Conteúdos cujo modelo e texto não mudaram são reaproveitados. Quando a
-    geração falha, o embedding anterior do conteúdo (se houver) é removido
-    para não continuar sendo usado desatualizado.
+    Conteúdos cujo modelo e texto não mudaram são reaproveitados; os demais
+    têm os vetores gerados em lote por `gerar_vetores`. Quando a geração de
+    um conteúdo falha, o embedding anterior dele (se houver) é removido para
+    não continuar sendo usado desatualizado.
     """
 
     existentes = obter_embeddings_existentes(conexao)
 
     contagem = {"gerados": 0, "reaproveitados": 0, "falhas": 0}
+    pendentes = []
 
     for conteudo in conteudos:
-        conteudo_id = conteudo["conteudo_id"]
-
         texto = preparar_texto(conteudo["titulo"], conteudo["descricao"])
         texto_hash = calcular_hash_texto(texto)
 
-        if existentes.get(conteudo_id) == (modelo, texto_hash):
+        if existentes.get(conteudo["conteudo_id"]) == (modelo, texto_hash):
             contagem["reaproveitados"] += 1
-            continue
+        else:
+            pendentes.append((conteudo["conteudo_id"], texto, texto_hash))
 
-        try:
-            vetor = gerar_embedding_conteudo(
-                conteudo["titulo"],
-                conteudo["descricao"],
-                parametros["dimensao"],
-                parametros["peso_titulo"],
-                idf
-            )
+    if not pendentes:
+        return contagem
 
-            if not np.any(vetor):
-                raise ValueError("texto sem termos do vocabulário")
+    try:
+        vetores = gerar_vetores([texto for _, texto, _ in pendentes])
 
-        except Exception as erro:
+    except Exception:
+        logger.exception(
+            "Falha na geração do lote de embeddings (%d conteúdos).",
+            len(pendentes)
+        )
+        vetores = [None] * len(pendentes)
+
+    for (conteudo_id, _, texto_hash), vetor in zip(pendentes, vetores):
+        if vetor is None or not np.any(vetor):
             contagem["falhas"] += 1
             logger.error(
                 "Falha na geração do embedding (conteudo_id=%s): %s",
                 conteudo_id,
-                erro
+                "erro no modelo" if vetor is None else "vetor nulo"
             )
 
             if conteudo_id in existentes:
@@ -180,41 +182,28 @@ def gerar_embeddings(config) -> dict:
 
     parametros = config["embeddings"]
 
+    modelo = carregar_modelo(parametros["modelo"])
+    validar_dimensao(modelo, parametros["dimensao"])
+
     conexao = conectar_vetorial(config)
 
     try:
         conteudos = obter_conteudos(conexao)
 
-        idf = calcular_idf(conteudos)
-
-        modelo = identificar_modelo(
-            parametros["modelo"],
-            parametros["dimensao"],
-            idf
-        )
-
-        logger.info(
-            "Modelo de embeddings: %s (vocabulário com %d termos)",
-            modelo,
-            len(idf)
-        )
-
         contagem = sincronizar_embeddings(
             conexao,
             conteudos,
-            idf,
-            modelo,
-            parametros
+            lambda textos: gerar_embeddings_textos(
+                modelo, textos, parametros["lote"]
+            ),
+            parametros["modelo"]
         )
 
         conexao.commit()
 
-        # O vocabulário só é gravado após o commit, para que o arquivo usado
-        # nas consultas corresponda sempre aos vetores armazenados.
-        salvar_vocabulario(idf, parametros["vocabulario"])
-
         logger.info(
-            "Embeddings: gerados=%d, reaproveitados=%d, falhas=%d",
+            "Embeddings (%s): gerados=%d, reaproveitados=%d, falhas=%d",
+            parametros["modelo"],
             contagem["gerados"],
             contagem["reaproveitados"],
             contagem["falhas"]

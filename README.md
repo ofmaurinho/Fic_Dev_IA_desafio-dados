@@ -67,7 +67,6 @@ desafio_dados/
 │   │   ├── interacoes.json
 │   │   └── comentarios.json
 │   └── processados/
-│       └── vocabulario_embeddings.json
 ├── sql/
 │   ├── criar_banco.sql
 │   ├── migracao_estudante2.sql
@@ -306,16 +305,16 @@ demonstrar_consultas()
 
 ### `src/embeddings/gerador.py`
 
-Preparação dos textos e simulação dos embeddings (RF08).
+Preparação dos textos e geração dos embeddings com o modelo `clip-ViT-B-32` (RF08).
 
 ```text
 preparar_texto()
 calcular_hash_texto()
-calcular_idf()
-identificar_modelo()
+carregar_modelo()
+obter_dimensao_modelo()
+validar_dimensao()
+gerar_embeddings_textos()
 gerar_embedding()
-gerar_embedding_conteudo()
-salvar_vocabulario() / carregar_vocabulario()
 ```
 
 ### `src/banco/vetorial.py`
@@ -380,11 +379,14 @@ pytest
 pymongo
 pgvector
 numpy
+sentence-transformers
 ```
 
-`pytest` é utilizado nos testes automatizados. `pymongo` acessa o MongoDB, `pgvector` adapta o tipo `vector` para o `psycopg2` e `numpy` é usado na geração dos vetores.
+`pytest` é utilizado nos testes automatizados. `pymongo` acessa o MongoDB, `pgvector` adapta o tipo `vector` para o `psycopg2`, `numpy` manipula os vetores e `sentence-transformers` (que instala `torch` e `transformers`) carrega o modelo de embeddings.
 
-Nenhum modelo de linguagem é baixado: os embeddings são simulados (ver seção 22).
+Na primeira execução, o modelo `clip-ViT-B-32` (cerca de 600 MB) é baixado do Hugging Face e fica em cache (`~/.cache/huggingface`). É necessário acesso à internet nessa primeira vez. O processamento roda em CPU; não é preciso GPU.
+
+No Windows, o aviso sobre *symlinks* do cache do Hugging Face pode ser ocultado com a variável de ambiente `HF_HUB_DISABLE_SYMLINKS_WARNING=1`. Ele não afeta o funcionamento.
 
 ### Passo 2 — Configurar as variáveis de ambiente
 
@@ -441,7 +443,7 @@ Banco novo:
 type sql\criar_banco.sql | docker exec -i desafio_dados_postgres psql -U postgres -d desafio_dados
 ```
 
-Banco já criado na etapa do Estudante 01 (habilita o pgvector, cria `conteudo_embedding` e recria `recomendacao` somente se ela ainda estiver no esquema antigo, que não tinha registros; executar a migração de novo preserva o histórico):
+Banco já criado na etapa do Estudante 01 (habilita o pgvector, cria `conteudo_embedding` com 512 dimensões e índice HNSW, recriando-a se existir com outra dimensão, e recria `recomendacao` somente se ela ainda estiver no esquema antigo, que não tinha registros; executar a migração de novo preserva o histórico):
 
 ```bash
 type sql\migracao_estudante2.sql | docker exec -i desafio_dados_postgres psql -U postgres -d desafio_dados
@@ -473,7 +475,7 @@ python -m pytest -v
 Resultado validado na etapa atual:
 
 ```text
-115 passed
+114 passed
 ```
 
 Os testes verificam os validadores, tratamentos, resumo, operações do PostgreSQL, MongoDB, embeddings, busca vetorial e recomendação. Os testes de banco usam transação com `ROLLBACK` (PostgreSQL) e um banco temporário `desafio_dados_teste` removido ao final (MongoDB).
@@ -501,7 +503,6 @@ catalogo.csv
 interacoes.json
 comentarios.json
 resumo.json
-vocabulario_embeddings.json
 ```
 
 ### Passo 8 — Conferir os logs
@@ -796,8 +797,8 @@ São registrados:
 - início, término e duração de cada etapa (`src.etapas`), inclusive a etapa em que ocorreu uma falha;
 - carga no MongoDB (inseridos, atualizados, sem alteração) e comentários rejeitados por referenciar conteúdo inexistente;
 - falhas de conexão com o MongoDB, com host e porta;
-- modelo de embeddings, tamanho do vocabulário e contagem de embeddings gerados, reaproveitados e com falha;
-- falhas na geração de embeddings, com o `conteudo_id`;
+- carregamento do modelo de embeddings (nome, dimensão e tempo de carga) e contagem de embeddings gerados, reaproveitados e com falha;
+- falhas ao carregar o modelo e na geração de embeddings (erro do modelo ou vetor nulo), com o `conteudo_id`, e remoção do embedding desatualizado;
 - falhas de persistência de embeddings e recomendações;
 - consultas semânticas executadas e divergência entre o modelo da consulta e o dos vetores armazenados;
 - totais de recomendações por status.
@@ -838,7 +839,7 @@ Cria a extensão `vector`, o modelo relacional e suas restrições.
 
 ### `sql/migracao_estudante2.sql`
 
-Atualiza um banco criado na etapa do Estudante 01: habilita o pgvector, cria `conteudo_embedding` e recria `recomendacao` com os novos campos somente quando a tabela ainda está no esquema antigo (sem a coluna `posicao`). Pode ser executado mais de uma vez sem apagar recomendações.
+Atualiza um banco criado em etapas anteriores: habilita o pgvector, cria `conteudo_embedding` com `VECTOR(512)` e o índice HNSW, recria a tabela de embeddings se ela existir com outra dimensão (por exemplo, 384 da versão com embeddings simulados; os vetores são regenerados pelo pipeline) e recria `recomendacao` com os novos campos somente quando a tabela ainda está no esquema antigo (sem a coluna `posicao`). Pode ser executado mais de uma vez sem apagar recomendações.
 
 ### `sql/consultas.sql`
 
@@ -852,6 +853,8 @@ Contém consultas utilizadas para verificar:
 - interações sem usuário;
 - embeddings armazenados por modelo e conteúdos sem embedding;
 - conteúdos mais semelhantes a um conteúdo (pgvector);
+- comparação das métricas `<->` (euclidiana), `<=>` (cosseno) e `<#>` (produto escalar);
+- plano de execução (`EXPLAIN`) mostrando o uso do índice HNSW;
 - recomendações de um usuário na execução mais recente do pipeline;
 - recomendações por execução e status;
 - ausência de conteúdos concluídos entre as recomendações.
@@ -887,13 +890,13 @@ python -m pytest -v
 Resultado validado na etapa atual:
 
 ```text
-115 passed
+114 passed
 ```
 
-- `test_embeddings.py`: normalização e tokenização, IDF, determinismo e norma dos vetores, similaridade maior entre textos relacionados, identificação do modelo.
+- `test_embeddings.py`: preparação do texto e hash; com o modelo real, carregado uma vez: reutilização da instância, validação da dimensão, 512 dimensões, norma 1, determinismo, geração em lote, texto longo (acima de 77 tokens) sem erro e similaridade maior entre textos relacionados.
 - `test_recomendacao.py`: fórmula da pontuação, limites 70 e 40, `Iconc = 0`, normalização dos índices e seleção das recomendações.
 - `test_mongodb.py`: carga idempotente, inserção, consulta por conteúdo, tag, nota, agregação por categoria e avaliações positivas.
-- `test_vetorial.py`: gravação e atualização de embeddings, busca por similaridade e cálculo de `Ivis`, `Icur` e `Iconc` no PostgreSQL com vetores de valores conhecidos; remoção do embedding desatualizado quando a geração falha; vocabulário não gravado se a persistência falhar; recomendações do usuário restritas à execução mais recente.
+- `test_vetorial.py`: gravação e atualização de embeddings, busca por similaridade e cálculo de `Ivis`, `Icur` e `Iconc` no PostgreSQL com vetores de valores conhecidos; geração em lote e reaproveitamento com gerador falso; regeneração quando o modelo muda; remoção do embedding desatualizado quando o vetor é nulo ou o modelo gera erro; recomendações do usuário restritas à execução mais recente.
 - `test_main.py`: validação dos argumentos `--consulta`, `--top-k` e `--usuario` e rejeição de quantidade não positiva na busca.
 
 ---
@@ -941,7 +944,7 @@ A etapa do Estudante 01 possui implementações funcionais para:
 A etapa do Estudante 02 partiu do estado do Estudante 01, sem alterar os arquivos brutos, e implementou:
 
 - MongoDB para comentários e avaliações, com carga idempotente e as consultas exigidas (RF07);
-- embeddings simulados armazenados no PostgreSQL com pgvector, sem geração duplicada (RF08);
+- embeddings do modelo `clip-ViT-B-32` (Aula 04) armazenados no PostgreSQL com pgvector e índice HNSW, sem geração duplicada (RF08);
 - busca semântica com quantidade de resultados configurável (RF09);
 - motor de recomendação com a fórmula do enunciado (RF10);
 - persistência das recomendações no PostgreSQL (RF11);
@@ -951,7 +954,7 @@ O Estudante 03 pode partir deste estado:
 
 ```text
 1. Reproduzir o ambiente conforme a seção "Ordem de execução".
-2. Executar os testes e confirmar 115 testes aprovados.
+2. Executar os testes e confirmar 114 testes aprovados.
 3. Executar `python -m src.main`.
 4. Conferir as consultas de `sql/consultas.sql` e `mongodb/consultas.js`.
 5. Criar as views de métricas e KPIs no PostgreSQL (RF12).
@@ -1011,11 +1014,13 @@ Apache Superset
 - O método atual de padronização com `capitalize()` deve ser revisado caso sejam introduzidos valores categóricos com múltiplas palavras cuja capitalização tenha significado específico.
 - O tratamento remove somente espaços nas extremidades dos textos e não altera espaços internos.
 - As datas que já estão no formato esperado não são transformadas desnecessariamente.
-- Os embeddings são simulados por feature hashing com IDF. A similaridade é lexical (palavras em comum), não semântica de fato: sinônimos sem termos em comum não se aproximam e consultas com termos fora do vocabulário do catálogo não retornam resultados. Ver seção 24.
-- Consultas amplas, que misturam temas (por exemplo, "banco de dados para inteligência artificial"), retornam resultados mais dispersos do que consultas específicas.
+- O modelo `clip-ViT-B-32` foi treinado principalmente com textos em inglês. Com títulos, descrições e consultas em português, as similaridades ficam concentradas (entre conteúdos, média de cerca de 0.80) e a busca por consultas curtas é imprecisa: as frases padrão das descrições e o tipo do conteúdo pesam mais que o tema. Ver seções 24 e 25.
+- O codificador de texto do CLIP considera no máximo 77 tokens; o final de descrições longas é ignorado.
+- Em CPU, a etapa de embeddings leva cerca de 1 minuto quando os 1000 vetores são gerados e cerca de 20 segundos quando todos são reaproveitados (importação do `torch` e carga do modelo, cerca de 7 segundos, ocorrem a cada execução).
+- Um modelo multilíngue de texto (por exemplo, `paraphrase-multilingual-MiniLM-L12-v2`, 384 dimensões) tende a representar melhor textos em português; a troca exige apenas mudar `embeddings.modelo`, `embeddings.dimensao` e a coluna `VECTOR`.
 - A normalização min-max dos índices é relativa a cada usuário: `Positivo` indica os conteúdos mais afins ao histórico daquele usuário, e não uma afinidade absoluta comparável entre usuários.
 - Conteúdos visualizados ou iniciados, mas não concluídos, continuam elegíveis para recomendação, pois o enunciado exige remover apenas os concluídos.
-- O perfil do usuário é recalculado a cada execução para todos os 150 usuários e 1000 conteúdos; em volumes maiores seria necessário processamento incremental e um índice vetorial (HNSW) no pgvector.
+- O perfil do usuário é recalculado a cada execução para todos os 150 usuários e 1000 conteúdos; em volumes maiores seria necessário processamento incremental. O índice HNSW acelera a busca semântica, mas o cálculo das recomendações percorre todos os candidatos de cada usuário.
 - A tabela `recomendacao` acumula uma geração por execução do pipeline; não há rotina de expurgo do histórico.
 
 ---
@@ -1031,7 +1036,7 @@ Apache Superset
 [ ] Executar sql/criar_banco.sql (ou sql/migracao_estudante2.sql em banco existente)
 [ ] Executar python -m src.main
 [ ] Executar python -m pytest -v
-[ ] Confirmar 115 passed
+[ ] Confirmar 114 passed
 [ ] Conferir dados/processados/
 [ ] Conferir logs/processamento.log
 [ ] Executar as consultas de sql/consultas.sql
@@ -1060,14 +1065,14 @@ Parâmetros no `config.yaml`:
 
 ```yaml
 mongodb:        host, porta, banco, colecao_comentarios, timeout_ms
-embeddings:     modelo, dimensao, peso_titulo, vocabulario
+embeddings:     modelo, dimensao, lote
 busca:          top_k, consultas_demo
 recomendacao:   top_n, tipos_visualizacao, tipo_curtida, tipo_conclusao,
                 nota_minima_curtida, limiar_positivo, limiar_negativo,
                 normalizar_indices
 ```
 
-`validar_configuracao()` exige essas seções e verifica dimensão, `top_k`, `top_n` e limiares.
+`validar_configuracao()` exige essas seções e verifica dimensão, lote, `top_k`, `top_n` e limiares. A dimensão também é conferida com a do modelo carregado.
 
 ---
 
@@ -1133,71 +1138,87 @@ Programação & Software      97 comentários | nota média 4.26
 
 ---
 
-## 24. Embeddings simulados e pgvector
+## 24. Embeddings com CLIP e pgvector
 
-### Por que simulados
+### Modelo
 
-Seguindo a abordagem da Aula 05 ("Construindo um Pipeline de Dados de Recomendação Simples"), os embeddings são **simulados** por um script Python, sem modelo de linguagem. Na aula, o vetor é aleatório (`random.uniform`, 3 dimensões). Aqui foi necessário um ajuste: o RF09 exige transformar uma consulta em linguagem natural em vetor, e um vetor aleatório não representa o texto. A simulação é, portanto, **determinística e baseada nos termos do texto**. O mesmo texto sempre gera o mesmo vetor, e textos com termos em comum ficam próximos.
+Seguindo a Aula 04 ("Armazenamento Vetorial"), os embeddings são gerados pelo modelo **`clip-ViT-B-32`** carregado com `sentence-transformers`, no mesmo padrão da aula:
+
+```python
+from sentence_transformers import SentenceTransformer
+
+modelo = SentenceTransformer("clip-ViT-B-32")
+vetor = modelo.encode(texto)
+```
+
+- **Dimensão:** 512 (`VECTOR(512)`).
+- O CLIP é um modelo multimodal (texto e imagem); aqui é usado apenas o codificador de texto.
+- Os vetores são normalizados (`normalize_embeddings=True`), com norma 1. Com isso, distância cosseno, euclidiana e produto escalar produzem a mesma ordenação.
+- O modelo é carregado uma vez por execução (`carregar_modelo`, com cache) e a dimensão é conferida com `embeddings.dimensao` antes de gravar.
+- Geração em lotes de `embeddings.lote` (64) textos.
+
+Histórico da decisão: a primeira versão usava embeddings **simulados** (feature hashing com IDF, 384 dimensões), seguindo a Aula 05. A equipe decidiu substituí-los pelo modelo real da Aula 04. A migração recria a tabela com 512 dimensões, e o controle de duplicidade regenera os vetores porque o modelo registrado mudou.
 
 ### Preparação do texto
 
 1. Representação textual: `"<titulo>. <descricao>"`, com espaços repetidos removidos.
-2. Normalização: minúsculas e remoção de acentos (`Inteligência` → `inteligencia`).
-3. Tokenização: sequências alfanuméricas; descarte de palavras com menos de 3 letras e de stopwords em português (`para`, `com`, `sobre`, `quero`...).
-4. Termos: palavras e pares de palavras consecutivas (bigramas), para capturar expressões como `banco_dados` e `machine_learning`.
-
-### Geração do vetor
-
-- **Peso do termo (IDF)**: `idf = ln((1 + N) / (1 + df))`, calculado sobre os 1000 conteúdos. As descrições do catálogo seguem modelos fixos ("Neste curso aprofundado, você aprenderá..."); termos presentes em todos os conteúdos, como `nivel`, recebem peso zero. Sem o IDF, essas frases dominavam a similaridade e as buscas retornavam conteúdos com o mesmo formato, e não com o mesmo tema.
-- **Feature hashing**: o SHA-256 de cada termo define uma posição (mod 384) e um sinal (+/−) no vetor, e soma `peso_do_campo × idf`.
-- **Peso do título**: 2 (`peso_titulo`); a descrição tem peso 1.
-- **Normalização L2**: o vetor tem norma 1.
-- **Dimensão**: 384, a mesma de modelos reais como `all-MiniLM-L6-v2`, o que facilita trocar por um modelo real sem mudar o esquema.
-- Termos da consulta que não existem no vocabulário do catálogo são ignorados.
-
-O vocabulário (IDF) é salvo em `dados/processados/vocabulario_embeddings.json` e reutilizado para vetorizar as consultas.
-
-### Modelo registrado
-
-O campo `modelo` de `conteudo_embedding` registra o identificador completo:
-
-```text
-simulado-hashing-idf-v1:384d:vocab-d803f63d9f2a
-```
-
-`vocab-...` é uma assinatura do vocabulário. Se o catálogo mudar, o vocabulário muda, o identificador muda e todos os vetores são gerados novamente.
+2. Nenhuma outra transformação (acentos, maiúsculas e pontuação são mantidos), pois o tokenizador do modelo faz o tratamento.
+3. **Limite de 77 tokens:** o codificador de texto do CLIP considera no máximo 77 tokens. O `sentence-transformers` trunca automaticamente o excedente, sem erro; o título vem primeiro para nunca ser cortado, e o final das descrições longas é ignorado.
 
 ### Tabela `conteudo_embedding`
 
 ```text
 conteudo_id  INTEGER PK / FK → conteudo
-embedding    VECTOR(384)
-modelo       VARCHAR(100)
-texto_hash   CHAR(64)     -- SHA-256 do texto preparado
+embedding    VECTOR(512)
+modelo       VARCHAR(100)  -- clip-ViT-B-32
+texto_hash   CHAR(64)      -- SHA-256 do texto preparado
 gerado_em    TIMESTAMP
 ```
+
+Índice ANN (busca aproximada de vizinhos), como apresentado na aula:
+
+```sql
+CREATE INDEX idx_conteudo_embedding_hnsw
+    ON conteudo_embedding
+    USING hnsw (embedding vector_cosine_ops);
+```
+
+O HNSW foi escolhido no lugar do IVFFlat porque pode ser criado com a tabela vazia (o IVFFlat precisa de dados para definir as listas). A consulta 9.2 de `sql/consultas.sql` mostra o plano com `Index Scan using idx_conteudo_embedding_hnsw`.
 
 ### Sem geração duplicada
 
 Antes de gerar, o pipeline compara `(modelo, texto_hash)` de cada conteúdo com o que já está armazenado:
 
 - igual → reaproveitado;
-- ausente ou diferente → gerado e gravado com `INSERT ... ON CONFLICT DO UPDATE`.
+- ausente ou diferente (texto alterado ou outro modelo) → incluído no lote e gravado com `INSERT ... ON CONFLICT DO UPDATE`.
 
-A chave primária `conteudo_id` garante no máximo um vetor por conteúdo. Resultado validado:
+A chave primária `conteudo_id` garante no máximo um vetor por conteúdo. Se o modelo gerar erro ou um vetor nulo para um conteúdo, a falha é registrada no log e o vetor antigo desse conteúdo é removido. Resultado validado:
 
 ```text
 1ª execução: 1000 gerados, 0 reaproveitados, 0 falhas
 2ª execução: 0 gerados, 1000 reaproveitados, 0 falhas
 ```
 
-Somente conteúdos persistidos no PostgreSQL recebem embedding. Um vetor nulo (texto sem termos do vocabulário) é registrado como falha no log.
+Somente conteúdos persistidos no PostgreSQL recebem embedding.
+
+### Métricas de similaridade
+
+A consulta 9.1 de `sql/consultas.sql` compara as três métricas da aula para os vizinhos do conteúdo 1 ("Curso Completo de Segurança de Redes e Controle de Acesso"):
+
+```text
+ conteudo_id | titulo                                                            | euclidiana | cosseno | produto_escalar
+         603 | Especialização em Segurança de Redes e Controle de Acesso ...     |     0.2307 |  0.0266 |          0.9734
+         991 | Masterclass de Segurança de Redes e Controle de Acesso ...        |     0.2328 |  0.0271 |          0.9729
+         587 | Curso Completo de Controle de Acesso Baseado em Papéis (RBAC) ... |     0.3088 |  0.0477 |          0.9523
+```
+
+Entre conteúdos do catálogo, a similaridade identifica bem os do mesmo tema.
 
 ---
 
 ## 25. Busca por similaridade semântica
 
-A consulta é vetorizada com o mesmo vocabulário e comparada pela distância cosseno do pgvector (`<=>`):
+A consulta é vetorizada com o mesmo modelo (`modelo.encode(consulta)`) e comparada pela distância cosseno do pgvector (`<=>`), usando o índice HNSW:
 
 ```sql
 SELECT co.conteudo_id, co.titulo, ca.nome AS categoria, co.tipo,
@@ -1216,28 +1237,33 @@ Resultados das três consultas de demonstração (`busca.consultas_demo`):
 ```text
 Consulta: Quero aprender os fundamentos de banco de dados para inteligência artificial.
   Pos |   ID | Similaridade | Tipo     | Categoria                | Título
-    1 |  160 |       0.2647 | Curso    | Inteligência Artificial  | Construindo Aplicações Robustas com Fundamentos de Deep Learning com PyTorch
-    2 |  685 |       0.2254 | Artigo   | Banco de Dados           | Estudo Técnico e Decisões de Arquitetura em Armazenamento de Documentos com MongoDB
-    3 |  366 |       0.2202 | Curso    | Engenharia de Dados      | Construindo Aplicações Robustas com Pipelines de Ingestão Batch e Streaming
-    4 |  359 |       0.2158 | Curso    | Inteligência Artificial  | Masterclass de Engenharia de Prompts e Agentes Inteligentes para Projetos Reais
-    5 |  170 |       0.2104 | Curso    | DevOps & Cloud           | Construindo Aplicações Robustas com Gerenciamento de Ambientes e Segredos em Nuvem
+    1 |  272 |       0.9246 | Artigo   | Programação & Software   | Guia Definitivo e Boas Práticas sobre Estruturas de Dados e Algoritmos Eficientes
+    2 |  146 |       0.9217 | Artigo   | Programação & Software   | Como Obter Alta Performance Utilizando Padrões de Projeto para Engenharia de Software
+    3 |  771 |       0.9212 | Artigo   | Segurança & Governança   | Como Obter Alta Performance Utilizando Governança de Dados para Aplicações de IA
+    4 |  755 |       0.9194 | Artigo   | Engenharia de Dados      | Princípios Essenciais e Arquitetura de Práticas de DataOps e Qualidade de Dados
+    5 |  465 |       0.9194 | Artigo   | Engenharia de Dados      | Princípios Essenciais e Arquitetura de Práticas de DataOps e Qualidade de Dados
 
 Consulta: Como proteger APIs contra vazamentos de dados?
-    1 |   11 |       0.6319 | Vídeo    | Segurança & Governança   | Análise Prática e Demonstração de Prevenção contra Vazamentos e Segurança em APIs
-    2 |  525 |       0.5881 | Vídeo    | Segurança & Governança   | Guia Rápido e Hands-on: Prevenção contra Vazamentos e Segurança em APIs
-    3 |  286 |       0.5874 | Vídeo    | Segurança & Governança   | Guia Rápido e Hands-on: Prevenção contra Vazamentos e Segurança em APIs
-    4 |  276 |       0.5871 | Podcast  | Segurança & Governança   | Data Insights Ep. 82: Experiências Reais com Prevenção contra Vazamentos e Segurança em APIs
-    5 |  885 |       0.5804 | Artigo   | Segurança & Governança   | Estudo Técnico e Decisões de Arquitetura em Prevenção contra Vazamentos e Segurança em APIs
+    1 |  965 |       0.9163 | Artigo   | DevOps & Cloud           | Como Obter Alta Performance Utilizando Ambientes Reprodutíveis para Aplicações de Dados
+    2 |  272 |       0.9155 | Artigo   | Programação & Software   | Guia Definitivo e Boas Práticas sobre Estruturas de Dados e Algoritmos Eficientes
+    3 |  547 |       0.9126 | Artigo   | DevOps & Cloud           | Guia Definitivo e Boas Práticas sobre Ambientes Reprodutíveis para Aplicações de Dados
+    4 |  885 |       0.9088 | Artigo   | Segurança & Governança   | Estudo Técnico e Decisões de Arquitetura em Prevenção contra Vazamentos e Segurança em APIs
+    5 |  771 |       0.9083 | Artigo   | Segurança & Governança   | Como Obter Alta Performance Utilizando Governança de Dados para Aplicações de IA
 
 Consulta: Podcast sobre machine learning supervisionado
-    1 |  740 |       0.6460 | Vídeo    | Ciência de Dados         | Melhores Práticas e Arquitetura de Machine Learning Supervisionado com Scikit-Learn
-    2 |  732 |       0.6393 | Podcast  | Ciência de Dados         | Deep Dive Ep. 97: Casos de Sucesso em Machine Learning Supervisionado com Scikit-Learn
-    3 |  427 |       0.6303 | Artigo   | Ciência de Dados         | Como Obter Alta Performance Utilizando Machine Learning Supervisionado com Scikit-Learn
-    4 |  910 |       0.6293 | Artigo   | Ciência de Dados         | Como Obter Alta Performance Utilizando Machine Learning Supervisionado com Scikit-Learn
-    5 |  798 |       0.6293 | Artigo   | Ciência de Dados         | Como Obter Alta Performance Utilizando Machine Learning Supervisionado com Scikit-Learn
+    1 |  427 |       0.8815 | Artigo   | Ciência de Dados         | Como Obter Alta Performance Utilizando Machine Learning Supervisionado com Scikit-Learn
+    2 |  318 |       0.8814 | Curso    | Ciência de Dados         | Formação Prática em Machine Learning Supervisionado com Scikit-Learn: Fundamentos e Aplicação
+    3 |  798 |       0.8806 | Artigo   | Ciência de Dados         | Como Obter Alta Performance Utilizando Machine Learning Supervisionado com Scikit-Learn
+    4 |  910 |       0.8756 | Artigo   | Ciência de Dados         | Como Obter Alta Performance Utilizando Machine Learning Supervisionado com Scikit-Learn
+    5 |   38 |       0.8528 | Artigo   | Inteligência Artificial  | Como Obter Alta Performance Utilizando Visão Computacional e Processamento de Imagens
 ```
 
-As consultas específicas trazem conteúdos do tema certo com similaridade próxima de 0.6. A consulta ampla do enunciado mistura dois temas e retorna resultados mais dispersos (limitação da simulação lexical). Na última consulta, a palavra "podcast" tem pouco peso porque o tipo do conteúdo não faz parte do título nem da descrição.
+Análise:
+
+- Consultas com termos técnicos que aparecem nos títulos funcionam bem: "machine learning supervisionado" traz 4 conteúdos do tema, e `--consulta "segurança na nuvem com kubernetes"` traz conteúdos de Orquestração com Kubernetes.
+- Consultas descritivas em português são imprecisas: em "Como proteger APIs contra vazamentos de dados?", o conteúdo sobre APIs aparece apenas em 4º lugar.
+- As similaridades ficam entre 0.85 e 0.93 para quase todos os conteúdos, e há predominância do tipo "Artigo". Isso indica que o modelo, treinado em inglês, é influenciado pelas frases padrão das descrições em português mais do que pelo tema.
+- Esses resultados são limitações do modelo escolhido, e não do armazenamento ou da busca no pgvector (ver seção 20).
 
 ---
 
@@ -1261,12 +1287,18 @@ Sem histórico de visualização ou de aprovação, o índice correspondente é 
 
 ### Normalização dos índices (`normalizar_indices: true`)
 
-Com vetores simulados, a similaridade cosseno bruta é baixa (a média entre conteúdos é cerca de 0.03). Sem normalização, a primeira execução gerou 0 recomendações `Positivo`, apenas 301 `Estável` e 73 usuários sem nenhuma recomendação. Por isso `Ivis` e `Icur` passam por min-max entre os candidatos de cada usuário: o conteúdo mais afim recebe 1.0 e o menos afim 0.0, e os valores continuam entre 0.0 e 1.0, como o enunciado exige.
+`Ivis` e `Icur` passam por min-max entre os candidatos de cada usuário: o conteúdo mais afim recebe 1.0 e o menos afim 0.0, e os valores continuam entre 0.0 e 1.0, como o enunciado exige.
+
+Com os vetores do CLIP, a similaridade cosseno bruta é alta e concentrada. Sem normalização, 96% das pontuações de todos os candidatos ficam entre 80 e 100, e quase qualquer conteúdo parece muito afim. Com normalização, as pontuações se espalham pela escala (73% entre 70 e 100), o que diferencia melhor os candidatos. Nas 10 recomendações gravadas por usuário, o resultado é o mesmo nas duas configurações:
 
 | Configuração | Positivo | Estável | Usuários sem recomendação |
 |---|---|---|---|
-| `normalizar_indices: false` | 0 | 301 | 73 |
-| `normalizar_indices: true` | 435 | 1063 | 0 |
+| `normalizar_indices: false` | 1490 | 10 | 0 |
+| `normalizar_indices: true` | 1490 | 10 | 0 |
+
+As 10 `Estável` são de usuários sem curtidas nem avaliações positivas (`Icur = 0`, pontuação máxima 50).
+
+Na versão anterior, com embeddings simulados, a normalização era indispensável: sem ela havia 0 `Positivo`, 301 `Estável` e 73 usuários sem recomendação.
 
 ### Classificação
 
@@ -1302,7 +1334,7 @@ UNIQUE (usuario_id, conteudo_id, data_geracao)
 ### Resultado validado
 
 ```text
-1498 recomendações para 150 usuários (Positivo: 435, Estável: 1063, usuários sem recomendação: 0)
+1500 recomendações para 150 usuários (Positivo: 1490, Estável: 10, usuários sem recomendação: 0)
 Recomendações de conteúdos já concluídos: 0
 Posições inconsistentes (fora de 1..N): 0
 ```
@@ -1311,11 +1343,11 @@ Exemplo (`python -m src.main --usuario 3`):
 
 ```text
   Pos |   ID | Pontuação | Status   | Conteúdo
-    1 |  396 |     80.08 | Positivo | Análise Prática e Demonstração de Storytelling com Dados para Apresentações Executivas
-    2 |  289 |     77.13 | Positivo | Data Insights Ep. 58: Experiências Reais com Storytelling com Dados para Apresentações Executivas
-    3 |  605 |     74.85 | Positivo | Data Insights Ep. 78: Experiências Reais com Storytelling com Dados para Apresentações Executivas
-    4 |  229 |     74.08 | Positivo | Arquitetura & Código Ep. 79: Inovações em Storytelling com Dados para Apresentações Executivas
-    5 |  241 |     67.64 | Estável  | Melhores Práticas e Arquitetura de Storytelling com Dados para Apresentações Executivas
+    1 |  465 |     98.02 | Positivo | Princípios Essenciais e Arquitetura de Práticas de DataOps e Qualidade de Dados
+    2 |  755 |     98.02 | Positivo | Princípios Essenciais e Arquitetura de Práticas de DataOps e Qualidade de Dados
+    3 |  885 |     97.58 | Positivo | Estudo Técnico e Decisões de Arquitetura em Prevenção contra Vazamentos e Segurança em APIs
+    4 |  575 |     96.85 | Positivo | Estudo Técnico e Decisões de Arquitetura em Práticas de DataOps e Qualidade de Dados
+    5 |  748 |     95.68 | Positivo | Especialização em Práticas de DataOps e Qualidade de Dados com Projetos Práticos
   ...
 ```
 
@@ -1332,11 +1364,13 @@ Exemplo (`python -m src.main --usuario 3`):
 - "Leia todo o PDF, entenda o que precisa ser feito, avalie o estado atual do projeto e planeje os próximos passos. Nossa responsabilidade está detalhada no PDF como Estudante 2."
 - Escolha do modelo de embeddings: a equipe indicou criar "um script Python que fará a ingestão dos dados e simulará a geração de embeddings", tendo como referência o PDF da Aula 05 ("Construindo um Pipeline de Dados de Recomendação Simples").
 - Implementação do plano aprovado: MongoDB, embeddings no pgvector, busca semântica, motor de recomendação, testes e documentação.
+- "Tenho um PDF com um exemplo melhor de geração de embedding (Aula 04 — Armazenamento Vetorial), veja se consegue aplicar ao nosso projeto." A equipe escolheu o modelo da aula, `clip-ViT-B-32`.
 
 ### Trechos ou decisões apoiados pela IA
 
 - Levantamento das lacunas do projeto para esta etapa: imagem `postgres:16` sem pgvector, tabela `recomendacao` sem posição e data de geração, comentários sem categoria para a agregação do RF07.
-- Simulação dos embeddings por *feature hashing* com IDF (`src/embeddings/gerador.py`), em vez do vetor aleatório da Aula 05, para que consultas em linguagem natural possam ser vetorizadas (RF09).
+- Primeira versão: simulação dos embeddings por *feature hashing* com IDF, em vez do vetor aleatório da Aula 05, para que consultas em linguagem natural pudessem ser vetorizadas (RF09).
+- Substituição pelo modelo `clip-ViT-B-32` da Aula 04 (`src/embeddings/gerador.py`): geração em lote com função de geração injetada (testável sem o modelo), índice HNSW, migração da coluna para `VECTOR(512)` e comparação das métricas `<->`, `<=>` e `<#>`.
 - Controle de geração duplicada por `modelo` + `texto_hash` (`src/banco/vetorial.py`).
 - Consultas SQL do motor de recomendação com `AVG(embedding)` e o operador `<=>` do pgvector (`src/recomendacao/motor.py`).
 - Carga idempotente no MongoDB com `upsert` e índice único; pipeline de agregação por categoria (`src/banco/mongodb.py`, `mongodb/consultas.js`).
@@ -1345,16 +1379,19 @@ Exemplo (`python -m src.main --usuario 3`):
 
 ### Erros ou inadequações encontrados nas respostas
 
-1. **Primeira versão da simulação sem IDF.** O protótipo inicial somava todos os termos com o mesmo peso. Como as descrições do catálogo seguem modelos fixos, termos como "nível", "especialistas" e "práticas" dominaram a similaridade, e a consulta sobre dashboards retornou um artigo sobre tipagem estática com Mypy. A ponderação IDF foi adicionada depois de medir a frequência dos termos no catálogo.
+1. **Primeira versão da simulação sem IDF** (versão anterior, substituída pelo CLIP). O protótipo inicial somava todos os termos com o mesmo peso. Como as descrições do catálogo seguem modelos fixos, termos como "nível", "especialistas" e "práticas" dominaram a similaridade, e a consulta sobre dashboards retornou um artigo sobre tipagem estática com Mypy. A ponderação IDF foi adicionada depois de medir a frequência dos termos no catálogo.
 2. **Pontuações baixas demais sem normalização.** Com a similaridade cosseno bruta, a primeira execução gerou 0 recomendações `Positivo` e deixou 73 dos 150 usuários sem recomendação. O risco estava previsto no plano, e a normalização min-max por usuário foi ativada depois de comparar as duas distribuições.
 3. **MongoDB errado recebendo os dados.** A primeira execução informou 1000 comentários carregados, mas a consulta feita dentro do container retornou 0. Um MongoDB instalado como serviço do Windows ouvia em `127.0.0.1:27017` e recebia as conexões no lugar do container. A porta do host do container passou a ser `27018`. A IA não apagou o banco `desafio_dados` criado nesse MongoDB local; a remoção ficou a critério do integrante.
 4. **Script `consultas.js` executado por redirecionamento.** `mongosh < consultas.js` falhou, porque o modo interativo quebra comandos escritos em várias linhas. A instrução passou a ser executar o arquivo como script.
 5. **Fuso horário inconsistente.** `gerado_em` usava o relógio do container (UTC) e `data_geracao` o horário local do Python. As duas datas passaram a ser geradas no Python.
 6. **Teste com asserção sem efeito.** Uma primeira versão de `test_calcular_candidatos_aplica_indices_e_conclusao` tinha uma asserção com `or True`. Ela foi substituída por valores exatos, calculados à mão a partir dos vetores do teste.
 7. **Problemas apontados na revisão de código (`/code-review`).** A revisão automática das alterações encontrou seis problemas, todos confirmados e corrigidos com testes: (a) `--usuario` mostrava a última execução em que o usuário tinha recomendações, e não a última execução do pipeline, podendo exibir conteúdos já concluídos; (b) o vocabulário era gravado antes do commit dos embeddings e ficava divergente se a transação falhasse; (c) quando a geração de um embedding falhava, o vetor antigo continuava armazenado e em uso; (d) a migração apagava a tabela `recomendacao` sem verificação, destruindo o histórico se fosse executada novamente; (e) `--consulta ""` e `--top-k` sozinho executavam o pipeline completo; (f) `--top-k 0` era trocado silenciosamente pelo padrão e `--top-k -1` causava erro no PostgreSQL.
+8. **Qualidade da busca com o CLIP em português.** Antes da troca, a IA alertou que o CLIP é treinado em inglês e sugeriu um modelo multilíngue; a equipe manteve o modelo da aula. Com os dados reais, as similaridades ficaram concentradas (0.85 a 0.93) e a consulta sobre APIs trouxe o conteúdo esperado apenas em 4º lugar. O resultado foi documentado como limitação (seções 20 e 25).
+9. **Método renomeado no `sentence-transformers` 6.** `get_sentence_embedding_dimension` passou a emitir aviso de descontinuação; o código usa `get_embedding_dimension` e mantém o nome antigo como alternativa.
 
 ### Alterações feitas pela equipe
 
-- Definição de que os embeddings seriam simulados, seguindo a Aula 05, em vez de usar um modelo real ou uma API.
+- Definição inicial de que os embeddings seriam simulados, seguindo a Aula 05.
+- Substituição dos embeddings simulados pelo modelo real `clip-ViT-B-32` da Aula 04, mantendo o modelo da aula apesar do alerta sobre textos em português.
 - Definição de que nenhum commit seria feito pela IA; o versionamento fica com o integrante.
 - _A preencher pelo integrante após a revisão do código: ajustes realizados, trechos reescritos e decisões revistas._

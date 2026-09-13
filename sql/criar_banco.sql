@@ -52,7 +52,7 @@ CREATE TABLE interacao (
 
 CREATE TABLE conteudo_embedding (
     conteudo_id INTEGER PRIMARY KEY,
-    embedding VECTOR(384) NOT NULL,
+    embedding VECTOR(512) NOT NULL,
     modelo VARCHAR(100) NOT NULL,
     texto_hash CHAR(64) NOT NULL,
     gerado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -61,6 +61,11 @@ CREATE TABLE conteudo_embedding (
         FOREIGN KEY (conteudo_id)
         REFERENCES conteudo (conteudo_id)
 );
+
+-- Índice ANN (busca aproximada de vizinhos) para a distância cosseno.
+CREATE INDEX idx_conteudo_embedding_hnsw
+    ON conteudo_embedding
+    USING hnsw (embedding vector_cosine_ops);
 
 CREATE TABLE recomendacao (
     recomendacao_id SERIAL PRIMARY KEY,

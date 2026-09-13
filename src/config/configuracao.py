@@ -85,6 +85,11 @@ def validar_configuracao(config):
             "Dimensão dos embeddings deve ser um inteiro positivo."
         )
 
+    if int(config["embeddings"].get("lote", 0)) <= 0:
+        raise ValueError(
+            "Tamanho do lote de embeddings deve ser um inteiro positivo."
+        )
+
     if int(config["busca"].get("top_k", 0)) <= 0:
         raise ValueError(
             "Quantidade de resultados da busca (top_k) deve ser positiva."

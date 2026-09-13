@@ -5,3 +5,4 @@ pytest
 pymongo
 pgvector
 numpy
+sentence-transformers

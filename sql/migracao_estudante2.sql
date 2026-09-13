@@ -1,15 +1,34 @@
 -- Migração para bancos criados antes da etapa do Estudante 02.
--- Habilita o pgvector, cria a tabela de embeddings e recria a tabela
--- de recomendações com posição, índices da fórmula, status e data de geração.
--- Em bancos novos, basta executar sql/criar_banco.sql.
+-- Habilita o pgvector, cria a tabela de embeddings (512 dimensões, modelo
+-- clip-ViT-B-32) com índice HNSW e recria a tabela de recomendações com
+-- posição, índices da fórmula, status e data de geração.
+-- Pode ser executada mais de uma vez. Em bancos novos, basta executar
+-- sql/criar_banco.sql.
 
 BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- Recria a tabela de embeddings se ela existir com outra dimensão (por
+-- exemplo, 384 da versão com embeddings simulados). Os vetores são
+-- regenerados pelo pipeline.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_attribute
+        WHERE attrelid = to_regclass('public.conteudo_embedding')
+          AND attname = 'embedding'
+          AND atttypmod <> 512
+    ) THEN
+        DROP TABLE conteudo_embedding;
+    END IF;
+END
+$$;
+
 CREATE TABLE IF NOT EXISTS conteudo_embedding (
     conteudo_id INTEGER PRIMARY KEY,
-    embedding VECTOR(384) NOT NULL,
+    embedding VECTOR(512) NOT NULL,
     modelo VARCHAR(100) NOT NULL,
     texto_hash CHAR(64) NOT NULL,
     gerado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -18,6 +37,10 @@ CREATE TABLE IF NOT EXISTS conteudo_embedding (
         FOREIGN KEY (conteudo_id)
         REFERENCES conteudo (conteudo_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_conteudo_embedding_hnsw
+    ON conteudo_embedding
+    USING hnsw (embedding vector_cosine_ops);
 
 -- Recria a tabela somente se ela ainda estiver no esquema antigo (sem a
 -- coluna posicao), que não possuía registros. Executar a migração novamente

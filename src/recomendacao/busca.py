@@ -1,16 +1,14 @@
 import logging
 
-import numpy as np
-
 from src.banco.vetorial import (
     buscar_similares,
     conectar_vetorial,
     obter_modelos_armazenados
 )
 from src.embeddings.gerador import (
-    carregar_vocabulario,
+    carregar_modelo,
     gerar_embedding,
-    identificar_modelo
+    validar_dimensao
 )
 
 
@@ -34,42 +32,21 @@ def buscar_conteudos(
             f"Quantidade de resultados deve ser positiva: {quantidade}"
         )
 
-    try:
-        idf = carregar_vocabulario(parametros["vocabulario"])
+    modelo = carregar_modelo(parametros["modelo"])
+    validar_dimensao(modelo, parametros["dimensao"])
 
-    except FileNotFoundError:
-        logger.error(
-            "Vocabulário de embeddings não encontrado em %s. "
-            "Execute o pipeline completo antes da busca.",
-            parametros["vocabulario"]
-        )
-        raise
-
-    modelo = identificar_modelo(
-        parametros["modelo"],
-        parametros["dimensao"],
-        idf
-    )
-
-    vetor = gerar_embedding(consulta, parametros["dimensao"], idf)
-
-    if not np.any(vetor):
-        logger.warning(
-            "Consulta sem termos conhecidos pelo vocabulário: %s",
-            consulta
-        )
-        return []
+    vetor = gerar_embedding(modelo, consulta)
 
     conexao = conectar_vetorial(config)
 
     try:
         modelos = obter_modelos_armazenados(conexao)
 
-        if modelos != [modelo]:
+        if modelos != [parametros["modelo"]]:
             logger.warning(
                 "Modelo da consulta (%s) difere dos embeddings armazenados "
                 "(%s). Execute o pipeline para regenerá-los.",
-                modelo,
+                parametros["modelo"],
                 ", ".join(modelos) or "nenhum"
             )
 

@@ -31,11 +31,11 @@
             "falhas": 0
         },
         "recomendacoes": {
-            "data_geracao": "2026-09-12T21:47:08.632194",
-            "total": 1498,
+            "data_geracao": "2026-09-12T22:29:58.613975",
+            "total": 1500,
             "por_status": {
-                "Positivo": 435,
-                "Estável": 1063
+                "Positivo": 1490,
+                "Estável": 10
             }
         }
     },
@@ -44,5 +44,5 @@
         "interacoes": 0,
         "comentarios": 0
     },
-    "tempo_processamento_segundos": 3.9404914379119873
+    "tempo_processamento_segundos": 27.570276498794556
 }

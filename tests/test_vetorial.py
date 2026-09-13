@@ -10,11 +10,9 @@ from src.banco.postgresql import (
     inserir_usuarios,
     obter_categorias
 )
-from src.banco import vetorial
 from src.banco.vetorial import (
     buscar_similares,
     conectar_vetorial,
-    gerar_embeddings,
     obter_embeddings_existentes,
     salvar_embedding,
     sincronizar_embeddings
@@ -26,7 +24,7 @@ from src.recomendacao.motor import (
 )
 
 
-DIMENSAO = 384
+DIMENSAO = 512
 
 
 @pytest.fixture
@@ -175,47 +173,86 @@ def test_calcular_candidatos_aplica_indices_e_conclusao(conexao):
     assert candidatos[999994]["pontuacao"] == pytest.approx(75.0, abs=0.05)
 
 
-def test_sincronizar_remove_embedding_quando_geracao_falha(conexao):
+def conteudo_teste(conteudo_id: int, titulo: str) -> dict:
+    return {
+        "conteudo_id": conteudo_id,
+        "titulo": titulo,
+        "descricao": "Descrição de teste"
+    }
+
+
+def test_sincronizar_gera_e_reaproveita(conexao):
+    criar_conteudos_teste(conexao, [999986, 999987])
+
+    conteudos = [
+        conteudo_teste(999986, "Primeiro"),
+        conteudo_teste(999987, "Segundo")
+    ]
+
+    lotes = []
+
+    def gerador_falso(textos):
+        lotes.append(len(textos))
+        return np.array([vetor_unitario([i]) for i in range(len(textos))])
+
+    primeira = sincronizar_embeddings(conexao, conteudos, gerador_falso, "falso")
+    segunda = sincronizar_embeddings(conexao, conteudos, gerador_falso, "falso")
+
+    assert primeira == {"gerados": 2, "reaproveitados": 0, "falhas": 0}
+    assert segunda["gerados"] == 0
+    assert segunda["reaproveitados"] == 2
+    assert lotes == [2]
+
+
+def test_sincronizar_regenera_quando_modelo_muda(conexao):
+    criar_conteudos_teste(conexao, [999988])
+
+    salvar_embedding(conexao, 999988, vetor_unitario([0]), "antigo", "a" * 64)
+
+    contagem = sincronizar_embeddings(
+        conexao,
+        [conteudo_teste(999988, "Texto")],
+        lambda textos: np.array([vetor_unitario([5]) for _ in textos]),
+        "novo"
+    )
+
+    assert contagem["gerados"] == 1
+    assert obter_embeddings_existentes(conexao)[999988][0] == "novo"
+
+
+def test_sincronizar_remove_embedding_quando_vetor_nulo(conexao):
     criar_conteudos_teste(conexao, [999997])
 
     salvar_embedding(conexao, 999997, vetor_unitario([0]), "antigo", "a" * 64)
 
     contagem = sincronizar_embeddings(
         conexao,
-        [{"conteudo_id": 999997, "titulo": "Texto novo", "descricao": "Sem vocabulário"}],
-        {},
-        "novo",
-        {"dimensao": DIMENSAO, "peso_titulo": 2}
+        [conteudo_teste(999997, "Texto novo")],
+        lambda textos: np.zeros((len(textos), DIMENSAO), dtype=np.float32),
+        "novo"
     )
 
     assert contagem == {"gerados": 0, "reaproveitados": 0, "falhas": 1}
     assert 999997 not in obter_embeddings_existentes(conexao)
 
 
-def test_gerar_embeddings_nao_grava_vocabulario_se_persistencia_falha(
-    config,
-    monkeypatch,
-    tmp_path
-):
-    caminho = tmp_path / "vocabulario.json"
+def test_sincronizar_conta_falha_quando_modelo_gera_erro(conexao):
+    criar_conteudos_teste(conexao, [999985])
 
-    config["embeddings"] = {
-        "modelo": "teste",
-        "dimensao": DIMENSAO,
-        "peso_titulo": 2,
-        "vocabulario": str(caminho)
-    }
+    salvar_embedding(conexao, 999985, vetor_unitario([0]), "antigo", "a" * 64)
 
-    def falhar(*args, **kwargs):
-        raise RuntimeError("falha simulada de persistência")
+    def gerador_com_erro(textos):
+        raise RuntimeError("falha simulada do modelo")
 
-    monkeypatch.setattr(vetorial, "obter_embeddings_existentes", lambda conexao: {})
-    monkeypatch.setattr(vetorial, "salvar_embedding", falhar)
+    contagem = sincronizar_embeddings(
+        conexao,
+        [conteudo_teste(999985, "Texto novo")],
+        gerador_com_erro,
+        "novo"
+    )
 
-    with pytest.raises(RuntimeError):
-        gerar_embeddings(config)
-
-    assert not caminho.exists()
+    assert contagem == {"gerados": 0, "reaproveitados": 0, "falhas": 1}
+    assert 999985 not in obter_embeddings_existentes(conexao)
 
 
 def test_recomendacoes_do_usuario_usam_execucao_mais_recente(conexao):
