@@ -24,11 +24,7 @@ O desafio prevê a integração de:
 - métricas e KPIs;
 - Apache Superset.
 
-A divisão inicial de responsabilidades adotada pela equipe segue a orientação do desafio:
-
-- Estudante 01: ingestão, tratamento e PostgreSQL;
-- Estudante 02: MongoDB, embeddings e recomendações;
-- Estudante 03: métricas, consultas e dashboard.
+A equipe organizou o desenvolvimento em blocos de trabalho, seguindo a orientação do desafio, para facilitar a implementação e a revisão. Essa divisão foi utilizada apenas como organização interna das atividades. A solução, a documentação, os testes e a entrega são de responsabilidade conjunta da equipe, e todos os integrantes devem compreender o funcionamento completo do projeto.
 
 ---
 
@@ -359,7 +355,7 @@ obter_recomendacoes_usuario()
 
 ## 5. Ordem de execução para reprodução do projeto
 
-Esta seção deve ser seguida pelo próximo integrante para reproduzir exatamente a etapa implementada até o momento.
+Esta seção deve ser seguida por qualquer integrante da equipe para reproduzir o projeto de forma consistente.
 
 ### Passo 1 — Instalar as dependências
 
@@ -443,7 +439,7 @@ Banco novo:
 type sql\criar_banco.sql | docker exec -i desafio_dados_postgres psql -U postgres -d desafio_dados
 ```
 
-Banco já criado na etapa do Estudante 01 (habilita o pgvector, cria `conteudo_embedding` com 512 dimensões e índice HNSW, recriando-a se existir com outra dimensão, e recria `recomendacao` somente se ela ainda estiver no esquema antigo, que não tinha registros; executar a migração de novo preserva o histórico):
+Banco já criado em etapa anterior do projeto (habilita o pgvector, cria `conteudo_embedding` com 512 dimensões e índice HNSW, recriando-a se existir com outra dimensão, e recria `recomendacao` somente se ela ainda estiver no esquema antigo, que não tinha registros; executar a migração de novo preserva o histórico):
 
 ```bash
 type sql\migracao_estudante2.sql | docker exec -i desafio_dados_postgres psql -U postgres -d desafio_dados
@@ -919,46 +915,45 @@ Não devem ser armazenadas no código, README ou repositório senhas ou outros s
 
 ---
 
-## 17. Estado atual do Estudante 01
+## 17. Estado atual do projeto
 
-A etapa do Estudante 01 possui implementações funcionais para:
+A implementação atual integra as etapas de ingestão, tratamento, armazenamento, processamento, busca semântica e recomendação. O projeto possui implementações funcionais para:
 
-- leitura das três fontes;
-- validação dos registros;
-- classificação de registros;
-- identificação de duplicidades;
-- tratamento e padronização;
-- preservação dos dados brutos;
-- geração dos dados processados;
-- geração do resumo;
-- PostgreSQL;
-- consultas de validação;
+- leitura das três fontes de dados;
+- validação e classificação dos registros;
+- identificação e remoção de duplicidades;
+- tratamento e padronização dos dados;
+- preservação dos arquivos brutos;
+- geração dos arquivos processados;
+- geração do resumo do processamento;
+- persistência estruturada no PostgreSQL;
+- persistência de comentários e avaliações no MongoDB;
+- geração e armazenamento de embeddings com pgvector;
+- busca por similaridade semântica;
+- geração e persistência das recomendações;
+- consultas de validação e demonstração;
 - testes automatizados;
 - logs da aplicação;
 - execução reproduzível por `python -m src.main`.
 
+A implementação foi construída de forma incremental, mas o resultado documentado neste README deve ser entendido como uma solução única e integrada da equipe.
+
 ---
 
-## 18. Estado atual do Estudante 02 e próxima etapa — Estudante 03
+## 18. Continuidade e próximos passos
 
-A etapa do Estudante 02 partiu do estado do Estudante 01, sem alterar os arquivos brutos, e implementou:
+O estado atual do projeto deve ser utilizado como base para a continuidade do desenvolvimento. Qualquer integrante da equipe pode reproduzir o ambiente seguindo a seção "Ordem de execução" e executar as etapas necessárias para validar a solução.
 
-- MongoDB para comentários e avaliações, com carga idempotente e as consultas exigidas (RF07);
-- embeddings do modelo `clip-ViT-B-32` (Aula 04) armazenados no PostgreSQL com pgvector e índice HNSW, sem geração duplicada (RF08);
-- busca semântica com quantidade de resultados configurável (RF09);
-- motor de recomendação com a fórmula do enunciado (RF10);
-- persistência das recomendações no PostgreSQL (RF11);
-- ampliação do resumo, dos logs e dos testes.
-
-O Estudante 03 pode partir deste estado:
+Para a continuidade do projeto:
 
 ```text
 1. Reproduzir o ambiente conforme a seção "Ordem de execução".
 2. Executar os testes e confirmar 114 testes aprovados.
 3. Executar `python -m src.main`.
 4. Conferir as consultas de `sql/consultas.sql` e `mongodb/consultas.js`.
-5. Criar as views de métricas e KPIs no PostgreSQL (RF12).
-6. Construir o dashboard no Apache Superset (RF13).
+5. Criar ou revisar as views de métricas e KPIs no PostgreSQL (RF12).
+6. Construir ou revisar o dashboard no Apache Superset (RF13).
+7. Validar a integração entre todas as etapas e atualizar a documentação final.
 ```
 
 Dados disponíveis para métricas: `usuario`, `conteudo`, `categoria`, `interacao` e `recomendacao`. A tabela `recomendacao` guarda o histórico de todas as execuções (`data_geracao`); para indicadores da situação atual, filtrar a execução mais recente, como na consulta 10 de `sql/consultas.sql`. Os campos `status`, `pontuacao`, `i_vis` e `i_cur` permitem, por exemplo, medir a distribuição das recomendações por status ou calcular a conversão de recomendações (conteúdos recomendados que depois receberam interação).
@@ -1051,7 +1046,7 @@ Os testes do PostgreSQL usam registros existentes (por exemplo `conteudo_id = 1`
 
 ---
 
-## 22. Estudante 02 — visão geral
+## 22. Visão geral das implementações de armazenamento, embeddings e recomendação
 
 | Requisito | Implementação |
 |---|---|
@@ -1389,33 +1384,55 @@ Interpretação: O crescimento contínuo desta proporção ao longo dos dias (re
 
 ## 28. Uso de IA
 
-### Ferramenta utilizada
+### Ferramentas utilizadas
 
-- **Claude Code** (Anthropic), modelo Claude Opus 5, executado no terminal com acesso ao repositório, ao Docker e aos bancos locais.
+Foram utilizadas ferramentas de IA generativa como apoio ao desenvolvimento, revisão, testes, documentação e investigação de problemas. A IA foi utilizada como ferramenta de apoio técnico, enquanto as decisões, validações, alterações no código e versionamento permaneceram sob responsabilidade da equipe.
 
-### Exemplos de solicitações realizadas
+Entre as ferramentas utilizadas está o **Claude Code** (Anthropic), executado no terminal com acesso ao repositório, ao Docker e aos bancos locais, além do **ChatGPT**, utilizado para análise dos requisitos, revisão dos códigos, validação das decisões técnicas, explicação de conceitos e organização da documentação.
 
-- "Leia todo o PDF, entenda o que precisa ser feito, avalie o estado atual do projeto e planeje os próximos passos. Nossa responsabilidade está detalhada no PDF como Estudante 2."
-- Escolha do modelo de embeddings: a equipe indicou criar "um script Python que fará a ingestão dos dados e simulará a geração de embeddings", tendo como referência o PDF da Aula 05 ("Construindo um Pipeline de Dados de Recomendação Simples").
-- Implementação do plano aprovado: MongoDB, embeddings no pgvector, busca semântica, motor de recomendação, testes e documentação.
-- "Tenho um PDF com um exemplo melhor de geração de embedding (Aula 04 — Armazenamento Vetorial), veja se consegue aplicar ao nosso projeto." A equipe escolheu o modelo da aula, `clip-ViT-B-32`.
+### Exemplos de prompts utilizados
 
-### Trechos ou decisões apoiados pela IA
+Durante o desenvolvimento, foram utilizados prompts direcionados ao contexto do desafio. Alguns exemplos representativos são:
 
-- Levantamento das lacunas do projeto para esta etapa: imagem `postgres:16` sem pgvector, tabela `recomendacao` sem posição e data de geração, comentários sem categoria para a agregação do RF07.
-- Primeira versão: simulação dos embeddings por *feature hashing* com IDF, em vez do vetor aleatório da Aula 05, para que consultas em linguagem natural pudessem ser vetorizadas (RF09).
-- Substituição pelo modelo `clip-ViT-B-32` da Aula 04 (`src/embeddings/gerador.py`): geração em lote com função de geração injetada (testável sem o modelo), índice HNSW, migração da coluna para `VECTOR(512)` e comparação das métricas `<->`, `<=>` e `<#>`.
-- Controle de geração duplicada por `modelo` + `texto_hash` (`src/banco/vetorial.py`).
-- Consultas SQL do motor de recomendação com `AVG(embedding)` e o operador `<=>` do pgvector (`src/recomendacao/motor.py`).
-- Carga idempotente no MongoDB com `upsert` e índice único; pipeline de agregação por categoria (`src/banco/mongodb.py`, `mongodb/consultas.js`).
-- Estrutura dos testes automatizados (`tests/test_embeddings.py`, `tests/test_recomendacao.py`, `tests/test_mongodb.py`, `tests/test_vetorial.py`, `tests/test_main.py`).
-- Redação das seções 22 a 27 deste README.
+- "Leia o PDF do desafio, identifique todos os requisitos funcionais e organize o que precisa ser implementado no projeto."
+- "Analise o estado atual do projeto e compare os arquivos existentes com os requisitos de ingestão, validação, tratamento e PostgreSQL. Aponte o que está faltando sem inventar requisitos."
+- "Revise este código de validação conforme o RF03. Preserve a lógica existente e indique somente as correções necessárias."
+- "Adicione as anotações de tipo de retorno às funções, mantendo o restante do código sem alterações."
+- "Analise as regras de duplicidade do catálogo, interações e comentários e verifique se as chaves estão de acordo com o desafio."
+- "Revise o tratamento dos dados conforme o RF04, considerando espaços, padronização, conversão de tipos, valores nulos, datas e preservação dos arquivos brutos."
+- "Analise o schema do PostgreSQL e verifique chaves primárias, estrangeiras, unicidade, integridade referencial e transações conforme o RF06."
+- "Revise o `main.py` e os logs para verificar se o RF14 está sendo atendido e indique quais eventos ainda precisam ser registrados."
+- "Explique o fluxo completo da aplicação, desde os arquivos brutos até o PostgreSQL, para que todos os integrantes consigam apresentar o projeto."
+- "Revise o README e retire referências que atribuam partes da entrega a estudantes específicos. A entrega é conjunta e a documentação deve apresentar o projeto como uma solução da equipe."
+
+### Exemplos de uso da IA no desenvolvimento
+
+A IA foi utilizada para:
+
+- interpretar os requisitos do desafio e transformar o enunciado em tarefas técnicas;
+- revisar a estrutura do projeto e a separação dos módulos;
+- apoiar a implementação e revisão de leitura de CSV/JSON;
+- revisar regras de validação, classificação e duplicidade;
+- analisar decisões de tratamento e conversão de tipos;
+- apoiar a criação e revisão do modelo relacional e das consultas SQL;
+- auxiliar na configuração do PostgreSQL com Docker e variáveis de ambiente;
+- revisar testes automatizados e identificar casos que precisavam de cobertura;
+- revisar os logs e a rastreabilidade das etapas do pipeline;
+- explicar erros encontrados durante a execução e orientar a investigação;
+- revisar e consolidar o README e as instruções de reprodução;
+- apoiar a compreensão das etapas de MongoDB, embeddings, pgvector, busca semântica, recomendação, métricas e dashboard para que a equipe consiga compreender a solução completa.
+
+### Critérios adotados no uso da IA
+
+As respostas da IA não foram consideradas automaticamente corretas. As sugestões foram avaliadas com base no enunciado do desafio, nos materiais das aulas, no comportamento observado durante a execução, nos testes automatizados e nos resultados obtidos no banco de dados.
+
+Quando uma sugestão apresentava comportamento inadequado, ela era revisada, testada e, quando necessário, substituída. Exemplos registrados ao longo do desenvolvimento incluem ajustes em validações, tratamento de duplicidades, transações, logs, testes, configuração dos bancos e consultas.
 
 ### Erros ou inadequações encontrados nas respostas
 
 1. **Primeira versão da simulação sem IDF** (versão anterior, substituída pelo CLIP). O protótipo inicial somava todos os termos com o mesmo peso. Como as descrições do catálogo seguem modelos fixos, termos como "nível", "especialistas" e "práticas" dominaram a similaridade, e a consulta sobre dashboards retornou um artigo sobre tipagem estática com Mypy. A ponderação IDF foi adicionada depois de medir a frequência dos termos no catálogo.
 2. **Pontuações baixas demais sem normalização.** Com a similaridade cosseno bruta, a primeira execução gerou 0 recomendações `Positivo` e deixou 73 dos 150 usuários sem recomendação. O risco estava previsto no plano, e a normalização min-max por usuário foi ativada depois de comparar as duas distribuições.
-3. **MongoDB errado recebendo os dados.** A primeira execução informou 1000 comentários carregados, mas a consulta feita dentro do container retornou 0. Um MongoDB instalado como serviço do Windows ouvia em `127.0.0.1:27017` e recebia as conexões no lugar do container. A porta do host do container passou a ser `27018`. A IA não apagou o banco `desafio_dados` criado nesse MongoDB local; a remoção ficou a critério do integrante.
+3. **MongoDB errado recebendo os dados.** A primeira execução informou 1000 comentários carregados, mas a consulta feita dentro do container retornou 0. Um MongoDB instalado como serviço do Windows ouvia em `127.0.0.1:27017` e recebia as conexões no lugar do container. A porta do host do container passou a ser `27018`. A correção foi documentada para evitar que a conexão fosse direcionada ao serviço local.
 4. **Script `consultas.js` executado por redirecionamento.** `mongosh < consultas.js` falhou, porque o modo interativo quebra comandos escritos em várias linhas. A instrução passou a ser executar o arquivo como script.
 5. **Fuso horário inconsistente.** `gerado_em` usava o relógio do container (UTC) e `data_geracao` o horário local do Python. As duas datas passaram a ser geradas no Python.
 6. **Teste com asserção sem efeito.** Uma primeira versão de `test_calcular_candidatos_aplica_indices_e_conclusao` tinha uma asserção com `or True`. Ela foi substituída por valores exatos, calculados à mão a partir dos vetores do teste.
@@ -1423,9 +1440,19 @@ Interpretação: O crescimento contínuo desta proporção ao longo dos dias (re
 8. **Qualidade da busca com o CLIP em português.** Antes da troca, a IA alertou que o CLIP é treinado em inglês e sugeriu um modelo multilíngue; a equipe manteve o modelo da aula. Com os dados reais, as similaridades ficaram concentradas (0.85 a 0.93) e a consulta sobre APIs trouxe o conteúdo esperado apenas em 4º lugar. O resultado foi documentado como limitação (seções 20 e 25).
 9. **Método renomeado no `sentence-transformers` 6.** `get_sentence_embedding_dimension` passou a emitir aviso de descontinuação; o código usa `get_embedding_dimension` e mantém o nome antigo como alternativa.
 
-### Alterações feitas pela equipe
+### Decisões e alterações realizadas pela equipe
 
-- Definição inicial de que os embeddings seriam simulados, seguindo a Aula 05.
-- Substituição dos embeddings simulados pelo modelo real `clip-ViT-B-32` da Aula 04, mantendo o modelo da aula apesar do alerta sobre textos em português.
-- Definição de que nenhum commit seria feito pela IA; o versionamento fica com o integrante.
-- _A preencher pelo integrante após a revisão do código: ajustes realizados, trechos reescritos e decisões revistas._
+- Organização do desenvolvimento em blocos de trabalho, mantendo a responsabilidade e a compreensão da solução como atividade conjunta.
+- Definição das regras de validação, tratamento e duplicidade com base no enunciado e nos dados reais.
+- Preservação dos arquivos brutos e geração de arquivos processados.
+- Utilização de PostgreSQL para os dados estruturados e MongoDB para comentários e avaliações.
+- Evolução dos embeddings simulados para o modelo real `clip-ViT-B-32` da Aula 04.
+- Uso de pgvector e índice HNSW para armazenamento e busca vetorial.
+- Definição de testes automatizados para validar as principais funções e integrações.
+- Implementação e revisão dos logs para permitir rastreamento das etapas e falhas.
+- Definição de que a IA não realiza commits ou substitui a revisão humana; o versionamento e a aprovação das alterações são responsabilidades da equipe.
+- Revisão do README para apresentar a solução como uma entrega conjunta, sem atribuir funcionalidades ou etapas da entrega final a estudantes específicos.
+
+### Participação humana e validação
+
+As alterações sugeridas pela IA foram revisadas pela equipe antes de serem incorporadas ao projeto. A execução dos comandos, testes, consultas aos bancos, análise dos resultados, escolha das alternativas e versionamento foram realizados de forma controlada pela equipe.
